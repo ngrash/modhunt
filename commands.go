@@ -47,7 +47,189 @@ func normalizeIndexCommand() error {
 		return fmt.Errorf("open database: %w", err)
 	}
 	defer db.Close()
+
+	_, err = db.Exec("CREATE TABLE IF NOT EXISTS modules (id INTEGER PRIMARY KEY ASC, module TEXT NOT NULL UNIQUE);")
+	if err != nil {
+		return fmt.Errorf("create table: %w", err)
+	}
+
+	// Check if column module_id exists in paths table.
+	row := db.QueryRow("SELECT COUNT(cid) FROM pragma_table_info('paths') WHERE name = 'module_id';")
+	var count int
+	err = row.Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check column: %w", err)
+	}
+	if count == 0 {
+		_, err := db.Exec("ALTER TABLE paths ADD COLUMN module_id INTEGER REFERENCES modules(id);")
+		if err != nil {
+			return fmt.Errorf("add column: %w", err)
+		}
+	}
+	_, err = db.Exec("CREATE INDEX IF NOT EXISTS idx_paths_module_id ON paths(module_id);")
+	if err != nil {
+		return fmt.Errorf("create index: %w", err)
+	}
+
+	err = processAllRecords(db, 5000)
+	if err != nil {
+		return fmt.Errorf("process all records: %w", err)
+	}
+	fmt.Println("all normalized")
 	return nil
+}
+
+func processAllRecords(db *sql.DB, batchSize int) error {
+	row := db.QueryRow("SELECT COUNT(*) FROM paths")
+	var total int
+	err := row.Scan(&total)
+	if err != nil {
+		return fmt.Errorf("count paths: %w", err)
+	}
+
+	fmt.Println("cleaning up", total, "paths")
+
+	var count int
+	lastID := int64(0)
+	for {
+		percentage := float64(count) / float64(total) * 100
+		fmt.Printf("normalizing %.2f%% (%d/%d)\n", percentage, count, total)
+		count += batchSize
+
+		var err error
+		lastID, err = processBatch(db, batchSize, lastID)
+		if err != nil {
+			return fmt.Errorf("process batch: %w", err)
+		}
+		if lastID == 0 {
+			break // done
+		}
+	}
+
+	fmt.Printf("normalized %d/%d\n", total, total)
+
+	// Remove unreferenced modules.
+	fmt.Println("cleaning up modules")
+	deleted, err := db.Exec("DELETE FROM modules WHERE id NOT IN (SELECT module_id FROM paths WHERE module_id IS NOT NULL);")
+	if err != nil {
+		return fmt.Errorf("delete unreferenced modules: %w", err)
+	}
+	affected, err := deleted.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	fmt.Printf("deleted %d unreferenced modules\n", affected)
+
+	return nil
+}
+
+func processBatch(db *sql.DB, batchSize int, lastID int64) (int64, error) {
+	type PathRow struct {
+		ID   int64
+		Path string
+	}
+
+	// Fetch the next batch.
+	rows, err := db.Query(`
+            SELECT id, path
+            FROM paths
+            WHERE id > ?
+            ORDER BY id
+            LIMIT ?`,
+		lastID, batchSize,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("query failed: %w", err)
+	}
+
+	var batch []PathRow
+	for rows.Next() {
+		var r PathRow
+		if err := rows.Scan(&r.ID, &r.Path); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("scan failed: %w", err)
+		}
+		batch = append(batch, r)
+	}
+	_ = rows.Close()
+
+	// No more rows -> we are done
+	if len(batch) == 0 {
+		return 0, nil
+	}
+
+	// Process and update each row.
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin tx failed: %w", err)
+	}
+
+	stmt, err := tx.Prepare(`
+            UPDATE paths
+            SET module_id = ?
+            WHERE id = ?
+        `)
+	if err != nil {
+		_ = tx.Rollback()
+		return 0, fmt.Errorf("prepare update failed: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, pathRow := range batch {
+		var moduleID int64
+		moduleName := normalizeModuleName(pathRow.Path)
+		modRow := tx.QueryRow("SELECT id FROM modules WHERE module = ?", moduleName)
+		err = modRow.Scan(&moduleID)
+		if errors.Is(err, sql.ErrNoRows) {
+			// Insert a new module.
+			res, err := tx.Exec("INSERT INTO modules (module) VALUES (?)", moduleName)
+			if err != nil {
+				_ = tx.Rollback()
+				return 0, fmt.Errorf("insert module failed: %w", err)
+			}
+			moduleID, err = res.LastInsertId()
+			if err != nil {
+				_ = tx.Rollback()
+				return 0, fmt.Errorf("last insert id failed: %w", err)
+			}
+		}
+
+		if _, err := stmt.Exec(moduleID, pathRow.ID); err != nil {
+			_ = tx.Rollback()
+			return 0, fmt.Errorf("exec update failed: %w", err)
+		}
+	}
+
+	// Commit the batch updates.
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit failed: %w", err)
+	}
+
+	// Advance lastID to the highest ID we’ve processed in this batch.
+	lastID = batch[len(batch)-1].ID
+	return lastID, nil
+}
+
+func normalizeModuleName(original string) string {
+	// Inconsistent capitalization is the most common issue.
+	name := strings.ToLower(original)
+
+	// Then there are some common prefixes that can be removed.
+	if strings.HasPrefix(name, "www.github.com/") {
+		return strings.TrimPrefix(name, "www.")
+	}
+
+	if strings.HasPrefix(original, "gopkg.in/") {
+		// TODO: Why does https://pkg.go.dev/github.com/go-yaml/yaml/v3 redirect to https://pkg.go.dev/gopkg.in/yaml.v2?
+		// From https://labix.org/gopkg.in:
+		//
+		//   The gopkg.in service provides versioned URLs that offer the proper metadata for redirecting the go tool onto well defined GitHub repositories.
+		//
+		//   gopkg.in/pkg.v3      → github.com/go-pkg/pkg (branch/tag v3, v3.N, or v3.N.M)
+		//   gopkg.in/user/pkg.v3 → github.com/user/pkg   (branch/tag v3, v3.N, or v3.N.M)
+	}
+
+	return name
 }
 
 func indexCommand() error {
@@ -182,6 +364,8 @@ func indexCommand() error {
 			} else if err != nil {
 				return fmt.Errorf("select path: %w", err)
 			}
+
+			// TODO: Maybe just let it fail? This way we would know if the index contains duplicates.
 
 			// With INSERT OR REPLACE we make sure that the timestamp is always the latest.
 			// This is defensive, but we cannot be sure that the index cannot contain duplicate versions.
