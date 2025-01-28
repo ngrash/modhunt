@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -9,13 +10,15 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"text/tabwriter"
 	"time"
 
 	"github.com/google/go-github/v68/github"
-
+	"golang.org/x/mod/module"
+	"golang.org/x/mod/semver"
 	_ "modernc.org/sqlite"
 
 	"github.com/ngrash/modhunt/index"
@@ -39,6 +42,246 @@ func commonCommand(_ []string, lookup *lookup.Lookup) error {
 		}
 	}
 	return nil
+}
+
+func lookupModulesCommand() error {
+	db, err := sql.Open("sqlite", "file:index.db?_pragma=foreign_keys(1)&_time_format=sqlite")
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer db.Close()
+
+	return lookupAllPaths(db, 5000)
+}
+
+func lookupAllPaths(db *sql.DB, batchSize int) error {
+	row := db.QueryRow("SELECT COUNT(*) FROM paths")
+	var total int
+	err := row.Scan(&total)
+	if err != nil {
+		return fmt.Errorf("count paths: %w", err)
+	}
+
+	fmt.Println("looking up", total, "paths")
+
+	var count int
+	lastID := int64(0)
+	for {
+		percentage := float64(count) / float64(total) * 100
+		fmt.Printf("lookup %.2f%% (%d/%d)\n", percentage, count, total)
+		count += batchSize
+
+		var err error
+		lastID, err = lookupBatch(db, batchSize, lastID)
+		if err != nil {
+			return fmt.Errorf("process batch: %w", err)
+		}
+		if lastID == 0 {
+			break // done
+		}
+	}
+
+	fmt.Printf("looked up %d/%d\n", total, total)
+	return nil
+}
+
+func lookupBatch(db *sql.DB, batchSize int, lastID int64) (int64, error) {
+	type PathRow struct {
+		ID            int64
+		Path          string
+		LatestVersion string // calculated later
+	}
+
+	// Fetch the next batch.
+	rows, err := db.Query(`SELECT id, path
+            FROM paths
+            WHERE id > ?
+            ORDER BY id
+            LIMIT ?`,
+		lastID, batchSize,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("query failed: %w", err)
+	}
+
+	var batch []PathRow
+	for rows.Next() {
+		var r PathRow
+		if err := rows.Scan(&r.ID, &r.Path); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("scan failed: %w", err)
+		}
+
+		versionRows, err := db.Query(
+			`SELECT version FROM versions WHERE path_id = ?`,
+			r.ID,
+		)
+		if err != nil {
+			return 0, fmt.Errorf("query versions: %w", err)
+		}
+		var versions []string
+		for versionRows.Next() {
+			var version string
+			if err := versionRows.Scan(&version); err != nil {
+				_ = versionRows.Close()
+				return 0, fmt.Errorf("scan version: %w", err)
+			}
+			versions = append(versions, version)
+		}
+		_ = versionRows.Close()
+
+		sort.Slice(versions, func(i, j int) bool {
+			return goVersionLess(versions[i], versions[j])
+		})
+		if len(versions) > 0 {
+			r.LatestVersion = versions[len(versions)-1]
+		}
+		// TODO: Versions are not correctly sorted.
+
+		fmt.Println(r.Path, r.LatestVersion)
+
+		batch = append(batch, r)
+	}
+	_ = rows.Close()
+
+	// No more rows -> we are done
+	if len(batch) == 0 {
+		return 0, nil
+	}
+
+	// Advance lastID to the highest ID we’ve processed in this batch.
+	lastID = batch[len(batch)-1].ID
+
+	return lastID, nil
+
+	for _, pathRow := range batch {
+		version, module, err := lookupModule(pathRow.Path, pathRow.LatestVersion)
+		if err != nil {
+			return 0, fmt.Errorf("lookup module %q: %w", pathRow.Path, err)
+		}
+		fmt.Println(pathRow.Path, version, "=>", module)
+	}
+
+	return lastID, nil
+}
+
+func goVersionLess(a, b string) bool {
+	// Classify each version: stable, prerelease, or pseudo
+	aType := classifyVersion(a)
+	bType := classifyVersion(b)
+
+	// If type differs, stable < prerelease < pseudo in ascending order,
+	// but we want stable > prerelease > pseudo for "latest",
+	// so flip the comparison to put stable last in sort order:
+	if aType != bType {
+		return aType < bType
+	}
+
+	switch aType {
+	case vtStable, vtPrerelease:
+		// Use semver.Compare directly
+		return semver.Compare(a, b) < 0
+
+	case vtPseudo:
+		// Compare base, then time, then commit
+		less, err := pseudoLess(a, b)
+		return err == nil && less
+	}
+	return false
+}
+
+const (
+	vtStable = iota
+	vtPrerelease
+	vtPseudo
+	vtInvalid
+)
+
+func classifyVersion(v string) int {
+	if !semver.IsValid(v) {
+		return vtInvalid
+	}
+	if module.IsPseudoVersion(v) {
+		return vtPseudo
+	}
+	// If prerelease is non-empty, it's vtPrerelease
+	if prerelease := semver.Prerelease(v); prerelease != "" {
+		return vtPrerelease
+	}
+	// Otherwise it's a stable release
+	return vtStable
+}
+
+// pseudoLess compares two pseudo-versions by the rules:
+//
+//	base version ascending, then timestamp ascending, then revision ascending
+//
+// But since we want a < b for ascending, it keeps that logic.
+func pseudoLess(a, b string) (bool, error) {
+	baseA, err := module.PseudoVersionBase(a)
+	if err != nil {
+		return false, err
+	}
+	baseB, err := module.PseudoVersionBase(b)
+	if err != nil {
+		return false, err
+	}
+	if c := semver.Compare(baseA, baseB); c != 0 {
+		return c < 0, nil
+	}
+	timeA, err := module.PseudoVersionTime(a)
+	if err != nil {
+		return false, err
+	}
+	timeB, err := module.PseudoVersionTime(b)
+	if err != nil {
+		return false, err
+	}
+	if timeA != timeB {
+		return timeA.Before(timeB), nil
+	}
+	revA, err := module.PseudoVersionRev(a)
+	if err != nil {
+		return false, err
+	}
+	revB, err := module.PseudoVersionRev(b)
+	if err != nil {
+		return false, err
+	}
+	return strings.Compare(revA, revB) < 0, nil
+}
+
+func lookupModule(path, version string) (string, string, error) {
+	path = strings.ToLower(path)
+
+	resp, err := http.Get("https://proxy.golang.org/" + path + "/@v/" + version + ".mod")
+	if err != nil {
+		return "", "", fmt.Errorf("get failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var module string
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "module ") {
+			module = strings.TrimPrefix(line, "module ")
+			break
+		}
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "module ") {
+			module = strings.TrimPrefix(trimmed, "module ")
+			break
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", "", err
+	}
+	if module == "" {
+		return "", "", fmt.Errorf("module not found: %s@%s", path, version)
+	}
+
+	return version, module, nil
 }
 
 func normalizeIndexCommand() error {

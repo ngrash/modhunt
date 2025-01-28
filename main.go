@@ -54,6 +54,8 @@ func run(args []string) error {
 		return indexCommand()
 	case "normalize-index":
 		return normalizeIndexCommand()
+	case "lookup-mods":
+		return lookupModulesCommand()
 	case "search":
 		query := strings.Join(fs.Args()[1:], " ")
 		for name, links := range lookup.Packages {
