@@ -6,11 +6,9 @@ import (
 	"io"
 	"log/slog"
 	"strings"
-
-	"github.com/ngrash/modhunt/lookup"
 )
 
-func ParseAwesomeGoReadme(r io.Reader) (*lookup.Source, error) {
+func ParseAwesomeGoReadme(r io.Reader) (*Source, error) {
 	type state string
 
 	const (
@@ -24,10 +22,10 @@ func ParseAwesomeGoReadme(r io.Reader) (*lookup.Source, error) {
 
 	s := bufio.NewScanner(r)
 
-	source := &lookup.Source{
+	source := &Source{
 		Name: "Awesome Go",
 		URL:  "https://awesome-go.com/",
-		Root: &lookup.Category{Level: 0, Name: "root"},
+		Root: &Category{Level: 0, Name: "root"},
 	}
 
 	cat := source.Root
@@ -80,7 +78,7 @@ func ParseAwesomeGoReadme(r io.Reader) (*lookup.Source, error) {
 				}
 
 				parent := cat
-				cat = &lookup.Category{Level: level, Name: title, Parent: parent}
+				cat = &Category{Level: level, Name: title, Parent: parent}
 				cat.Parent.Categories = append(cat.Parent.Categories, cat)
 				st = stReadCategoryBody
 			case stReadCategoryBody:
@@ -115,7 +113,7 @@ func ParseAwesomeGoReadme(r io.Reader) (*lookup.Source, error) {
 					}
 					url := parts[0]
 					desc := strings.TrimLeft(parts[1], " -")
-					cat.Links = append(cat.Links, lookup.Link{
+					cat.Links = append(cat.Links, Link{
 						URL:         url,
 						Description: desc,
 						Category:    cat,

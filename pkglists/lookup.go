@@ -1,8 +1,10 @@
-package lookup
+package pkglists
 
 import (
+	"bytes"
 	"fmt"
 	"net/url"
+	"os"
 )
 
 type Link struct {
@@ -118,4 +120,34 @@ func checkLink(l Link) error {
 		return fmt.Errorf("link %s has no source", l.URL)
 	}
 	return nil
+}
+
+func NewTestdataLookup() (*Lookup, error) {
+	l := NewLookup()
+
+	wikiData, err := os.ReadFile("testdata/go-wiki-Projects.md")
+	if err != nil {
+		return nil, fmt.Errorf("read wiki: %w", err)
+	}
+	wikiSource, err := ParseGoWikiProjects(bytes.NewReader(wikiData))
+	if err != nil {
+		return nil, fmt.Errorf("parse wiki: %w", err)
+	}
+	if err := l.AddSource(wikiSource); err != nil {
+		return nil, fmt.Errorf("add wiki source: %w", err)
+	}
+
+	awesomeData, err := os.ReadFile("testdata/awesome-go-README.md")
+	if err != nil {
+		return nil, fmt.Errorf("read awesome: %w", err)
+	}
+	awesomeSource, err := ParseAwesomeGoReadme(bytes.NewReader(awesomeData))
+	if err != nil {
+		return nil, fmt.Errorf("parse awesome: %w", err)
+	}
+	if err := l.AddSource(awesomeSource); err != nil {
+		return nil, fmt.Errorf("add awesome source: %w", err)
+	}
+
+	return &l, nil
 }

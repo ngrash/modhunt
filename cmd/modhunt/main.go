@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -25,7 +24,6 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/ngrash/modhunt/cmd/modhunt/internal/indexcmd"
-	"github.com/ngrash/modhunt/lookup"
 	"github.com/ngrash/modhunt/pkglists"
 )
 
@@ -59,7 +57,7 @@ func main() {
 var categoriesCommand = &cli.Command{
 	Name: "categories",
 	Action: func(ctx context.Context, cmd *cli.Command) error {
-		lookup, err := initLookup()
+		lookup, err := pkglists.NewTestdataLookup()
 		if err != nil {
 			return fmt.Errorf("init lookup: %w", err)
 		}
@@ -73,7 +71,7 @@ var categoriesCommand = &cli.Command{
 var commonCommand = &cli.Command{
 	Name: "common",
 	Action: func(ctx context.Context, cmd *cli.Command) error {
-		lookup, err := initLookup()
+		lookup, err := pkglists.NewTestdataLookup()
 		if err != nil {
 			return fmt.Errorf("init lookup: %w", err)
 		}
@@ -537,7 +535,7 @@ var alternativesCommand = &cli.Command{
 		},
 	},
 	Action: func(ctx context.Context, cmd *cli.Command) error {
-		lookup, err := initLookup()
+		lookup, err := pkglists.NewTestdataLookup()
 		if err != nil {
 			return fmt.Errorf("init lookup: %w", err)
 		}
@@ -572,7 +570,7 @@ var goProxyCommand = &cli.Command{
 		},
 	},
 	Action: func(ctx context.Context, cmd *cli.Command) error {
-		lookup, err := initLookup()
+		lookup, err := pkglists.NewTestdataLookup()
 		if err != nil {
 			return fmt.Errorf("init lookup: %w", err)
 		}
@@ -615,7 +613,7 @@ type VersionInfo struct {
 var strangeCommand = &cli.Command{
 	Name: "strange",
 	Action: func(ctx context.Context, cmd *cli.Command) error {
-		lookup, err := initLookup()
+		lookup, err := pkglists.NewTestdataLookup()
 		if err != nil {
 			return fmt.Errorf("init lookup: %w", err)
 		}
@@ -727,7 +725,7 @@ func downloadWorker(wg *sync.WaitGroup, modules <-chan string, results chan<- dl
 var downloadInfoCommand = &cli.Command{
 	Name: "download-info",
 	Action: func(ctx context.Context, cmd *cli.Command) error {
-		lookup, err := initLookup()
+		lookup, err := pkglists.NewTestdataLookup()
 		if err != nil {
 			return fmt.Errorf("init lookup: %w", err)
 		}
@@ -796,7 +794,7 @@ var downloadInfoCommand = &cli.Command{
 var multiURLCommand = &cli.Command{
 	Name: "multi-url",
 	Action: func(ctx context.Context, cmd *cli.Command) error {
-		lookup, err := initLookup()
+		lookup, err := pkglists.NewTestdataLookup()
 		if err != nil {
 			return fmt.Errorf("init lookup: %w", err)
 		}
@@ -827,7 +825,7 @@ var githubCommand = &cli.Command{
 		},
 	},
 	Action: func(ctx context.Context, cmd *cli.Command) error {
-		lookup, err := initLookup()
+		lookup, err := pkglists.NewTestdataLookup()
 		if err != nil {
 			return fmt.Errorf("init lookup: %w", err)
 		}
@@ -878,7 +876,7 @@ var searchCommand = &cli.Command{
 		},
 	},
 	Action: func(ctx context.Context, cmd *cli.Command) error {
-		lookup, err := initLookup()
+		lookup, err := pkglists.NewTestdataLookup()
 		if err != nil {
 			return fmt.Errorf("init lookup: %w", err)
 		}
@@ -902,7 +900,7 @@ var searchCommand = &cli.Command{
 var domainsCommand = &cli.Command{
 	Name: "domains",
 	Action: func(ctx context.Context, cmd *cli.Command) error {
-		lookup, err := initLookup()
+		lookup, err := pkglists.NewTestdataLookup()
 		if err != nil {
 			return fmt.Errorf("init lookup: %w", err)
 		}
@@ -937,37 +935,7 @@ var suggestCommand = &cli.Command{
 	},
 }
 
-func initLookup() (*lookup.Lookup, error) {
-	l := lookup.NewLookup()
-
-	wikiData, err := os.ReadFile("testdata/go-wiki-Projects.md")
-	if err != nil {
-		return nil, fmt.Errorf("read wiki: %w", err)
-	}
-	wikiSource, err := pkglists.ParseGoWikiProjects(bytes.NewReader(wikiData))
-	if err != nil {
-		return nil, fmt.Errorf("parse wiki: %w", err)
-	}
-	if err := l.AddSource(wikiSource); err != nil {
-		return nil, fmt.Errorf("add wiki source: %w", err)
-	}
-
-	awesomeData, err := os.ReadFile("testdata/awesome-go-README.md")
-	if err != nil {
-		return nil, fmt.Errorf("read awesome: %w", err)
-	}
-	awesomeSource, err := pkglists.ParseAwesomeGoReadme(bytes.NewReader(awesomeData))
-	if err != nil {
-		return nil, fmt.Errorf("parse awesome: %w", err)
-	}
-	if err := l.AddSource(awesomeSource); err != nil {
-		return nil, fmt.Errorf("add awesome source: %w", err)
-	}
-
-	return &l, nil
-}
-
-func printCategory(cat *lookup.Category) {
+func printCategory(cat *pkglists.Category) {
 	var ident string
 	if cat.Level > 0 {
 		ident = strings.Repeat("  ", cat.Level-1) + "└─"

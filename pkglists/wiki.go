@@ -8,15 +8,13 @@ import (
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/text"
-
-	"github.com/ngrash/modhunt/lookup"
 )
 
-func ParseGoWikiProjects(r io.Reader) (*lookup.Source, error) {
-	source := &lookup.Source{
+func ParseGoWikiProjects(r io.Reader) (*Source, error) {
+	source := &Source{
 		Name: "Go Wiki",
 		URL:  "https://go.dev/wiki/Projects",
-		Root: &lookup.Category{
+		Root: &Category{
 			Name: "root",
 		},
 	}
@@ -48,7 +46,7 @@ func ParseGoWikiProjects(r io.Reader) (*lookup.Source, error) {
 		}
 
 		parent := cat
-		cat = &lookup.Category{
+		cat = &Category{
 			Parent: parent,
 			Level:  level,
 			Name:   title,
@@ -84,7 +82,7 @@ func ParseGoWikiProjects(r io.Reader) (*lookup.Source, error) {
 						desc := tbLines[urlIdx+len(url)+1:]
 						desc = strings.TrimLeft(desc, " -")
 
-						cat.Links = append(cat.Links, lookup.Link{
+						cat.Links = append(cat.Links, Link{
 							URL:         url,
 							Description: desc,
 							Category:    cat,
