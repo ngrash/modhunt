@@ -29,7 +29,8 @@ import (
 
 func main() {
 	cmd := &cli.Command{
-		Name: "modhunt",
+		Name:  "modhunt",
+		Usage: "a tool for exploring Go module data",
 		Commands: []*cli.Command{
 			categoriesCommand,
 			commonCommand,
@@ -56,7 +57,10 @@ func main() {
 
 var indexCommand = &cli.Command{
 	Name:  "index",
-	Usage: "access the feed of new module versions",
+	Usage: "An interface for the Go Module Index",
+	Description: "On https://index.golang.org/ the Go Module Index is described as\n" +
+		"\"an index which serves a feed of new module versions that\n" +
+		"become available by proxy.golang.org.\"",
 	Commands: []*cli.Command{
 		indexSyncCommand,
 	},
