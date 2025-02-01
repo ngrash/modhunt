@@ -23,8 +23,8 @@ import (
 	"golang.org/x/mod/semver"
 	_ "modernc.org/sqlite"
 
-	"github.com/ngrash/modhunt/modindex"
-	"github.com/ngrash/modhunt/pkglists"
+	"github.com/ngrash/modhunt/internal/modindex"
+	"github.com/ngrash/modhunt/internal/pkglists"
 )
 
 func main() {

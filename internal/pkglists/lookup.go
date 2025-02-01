@@ -125,7 +125,7 @@ func checkLink(l Link) error {
 func NewTestdataLookup() (*Lookup, error) {
 	l := NewLookup()
 
-	wikiData, err := os.ReadFile("testdata/go-wiki-Projects.md")
+	wikiData, err := os.ReadFile("internal/testdata/go-wiki-Projects.md")
 	if err != nil {
 		return nil, fmt.Errorf("read wiki: %w", err)
 	}
@@ -137,7 +137,7 @@ func NewTestdataLookup() (*Lookup, error) {
 		return nil, fmt.Errorf("add wiki source: %w", err)
 	}
 
-	awesomeData, err := os.ReadFile("testdata/awesome-go-README.md")
+	awesomeData, err := os.ReadFile("internal/testdata/awesome-go-README.md")
 	if err != nil {
 		return nil, fmt.Errorf("read awesome: %w", err)
 	}

@@ -12,7 +12,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/ngrash/modhunt/modindex/internal/index"
+	"github.com/ngrash/modhunt/internal/modindex/internal/index"
 )
 
 func SynchronizeDatabase(ctx context.Context) (err error) {
