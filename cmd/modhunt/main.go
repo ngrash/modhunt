@@ -23,7 +23,7 @@ import (
 	"golang.org/x/mod/semver"
 	_ "modernc.org/sqlite"
 
-	"github.com/ngrash/modhunt/cmd/modhunt/internal/indexcmd"
+	"github.com/ngrash/modhunt/modindex"
 	"github.com/ngrash/modhunt/pkglists"
 )
 
@@ -35,7 +35,7 @@ func main() {
 			commonCommand,
 			lookupModulesCommand,
 			normalizeIndexCommand,
-			indexcmd.Cmd,
+			indexCommand,
 			alternativesCommand,
 			goProxyCommand,
 			strangeCommand,
@@ -52,6 +52,22 @@ func main() {
 		_, _ = fmt.Fprintf(os.Stderr, "%s\n", err)
 		os.Exit(1)
 	}
+}
+
+var indexCommand = &cli.Command{
+	Name:  "index",
+	Usage: "access the feed of new module versions",
+	Commands: []*cli.Command{
+		indexSyncCommand,
+	},
+}
+
+var indexSyncCommand = &cli.Command{
+	Name:  "sync",
+	Usage: "synchronize the module index database",
+	Action: func(ctx context.Context, cli *cli.Command) error {
+		return modindex.SynchronizeDatabase(ctx)
+	},
 }
 
 var categoriesCommand = &cli.Command{
